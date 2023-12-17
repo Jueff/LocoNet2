@@ -66,57 +66,40 @@
 #pragma once
 
 #include <map>
-
-#define ETL_NO_STL
-#include <Embedded_Template_Library.h> // Mandatory for Arduino IDE only
 #include <etl/vector.h>
 #include <vector>
 #include <functional>
 
-#include "ln_opc.h"
+#include "ln2_opc.h"
 #include "LocoNetMessageBuffer.h"
 #include "Bus.h"
 
-// #if defined(ARDUINO_ARCH_AVR)
-// 	#include "LocoNetAvrICP.h"
-// #elif defined(ARDUINO_ARCH_ESP32)
-// 	#include "LocoNetESP32.h"
-// 	#include "LocoNetESP32Hybrid.h"
-// 	#include "LocoNetESP32UART.h"
-// #endif
-// 
-// #include "LocoNetStream.h"
+#define DEBUG_LN2_OUTPUT_
 
-// Uncomment the next line to enable library DEBUG Messages
-#define DEBUG_OUTPUT
-
-#ifdef DEBUG_OUTPUT
+#ifdef DEBUG_LN2_OUTPUT
 	#include <cstdio>
-	#if defined(ESP32) && ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_DEBUG
+	#if defined(ESP32) && ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_DEBUG_LN2
 		#include <esp32-hal-log.h>
-		#define DEBUG(format, ...) log_printf(ARDUHAL_LOG_FORMAT(D, format), ##__VA_ARGS__)
-		#define DEBUG_ISR(format, ...) ets_printf(ARDUHAL_LOG_FORMAT(D, format), ##__VA_ARGS__)
+		#define DEBUG_LN2(format, ...) log_printf(ARDUHAL_LOG_FORMAT(D, format), ##__VA_ARGS__)
+		#define DEBUG_LN2_ISR(format, ...) ets_printf(ARDUHAL_LOG_FORMAT(D, format), ##__VA_ARGS__)
 	#else
-		#define DEBUG(...) { printf(__VA_ARGS__); printf("\n"); }
-		#define DEBUG_ISR(...) { printf(__VA_ARGS__); printf("\n"); }
+		#define DEBUG_LN2(...) { printf(__VA_ARGS__); printf("\n"); }
+		#define DEBUG_LN2_ISR(...) { printf(__VA_ARGS__); printf("\n"); }
 	#endif
 #else
-	#define DEBUG(format, ...)
-	#define DEBUG_ISR(format, ...)
+	#define DEBUG_LN2(format, ...)
+	#define DEBUG_LN2_ISR(format, ...)
 #endif
 
 typedef enum
 {
-    LN_IDLE = 0, LN_NETWORK_BUSY, LN_CD_BACKOFF, LN_PRIO_BACKOFF, LN_COLLISION, LN_UNKNOWN_ERROR, LN_RETRY_ERROR
+    LN_CD_BACKOFF = 0, LN_PRIO_BACKOFF, LN_NETWORK_BUSY, LN_DONE, LN_COLLISION, LN_UNKNOWN_ERROR, LN_RETRY_ERROR
 } LN_STATUS;
 
 
-using LocoNetBus = Bus<LnMsg, LN_STATUS, LN_STATUS::LN_IDLE, 10>;
+using LocoNetBus = Bus<LnMsg, LN_STATUS, LN_STATUS::LN_DONE, 10>;
 
 using LocoNetConsumer = Consumer<LnMsg, LN_STATUS>;
-
-constexpr int LOCONET_BAUD = 16667; // LocoNet BAUD Rate
-constexpr int LOCONET_BREAK_BAUD = 9600; // LocoNet BAUD Rate
 
 // CD Backoff starts after the Stop Bit (Bit 9) and has a minimum or 20 Bit Times
 // but initially starts with an additional 20 Bit Times
@@ -127,16 +110,6 @@ constexpr uint8_t LN_BACKOFF_MIN        = (LN_CARRIER_TICKS + LN_MASTER_DELAY); 
 constexpr uint8_t LN_BACKOFF_INITIAL    = (LN_BACKOFF_MIN + LN_INITIAL_PRIO_DELAY);  // for the first normal tx attempt
 constexpr uint8_t LN_BACKOFF_MAX        = (LN_BACKOFF_INITIAL + 10);                 // lower priority is not supported
 constexpr uint8_t LN_COLLISION_TICKS    = 15; //< after collision the bus will be low for this number of ticks.
-
-// number of microseconds for one bit
-constexpr uint8_t LocoNetTickTime = 60;
-constexpr uint16_t LocoNetRxByteMicros = LocoNetTickTime * 10;	// StartBit + 8 Data Bits + StopBit = 10 Bits
-
-// number of microseconds to remain in a collision state
-constexpr uint32_t CollisionTimeoutIncrement = 15 * LocoNetTickTime;
-
-// number of microseconds to remain in a CD BACKOFF state
-constexpr uint32_t CDBackoffTimeoutIncrement = LocoNetTickTime * LN_CARRIER_TICKS;
 
 //
 // LNCV error codes
@@ -166,7 +139,7 @@ inline uint8_t lnPacketSize(const LnMsg * msg) {
     return LOCONET_PACKET_SIZE(msg->sz.command, msg->sz.mesg_size);
 }
 
-#define ADDR(hi,lo)  (   (lo) | (( (hi) & 0x0F ) << 7)    )
+#define ADDR(hi,lo)  (   ((lo) | (((hi) & 0x0F ) << 7))    )
 
 #define MAX_BACKEND_CONSUMERS  10
 
@@ -205,6 +178,8 @@ LnMsg makeSwRec(uint16_t address, bool output, bool thrown);
 uint8_t writeChecksum(LnMsg &msg);
 
 size_t formatMsg(const LnMsg &, char* dst, size_t len);
+
+LN_STATUS sendMsg(LocoNetBus *ln, LnMsg Msg);
 
 LN_STATUS requestSwitch(LocoNetBus *ln, uint16_t Address, uint8_t Output, uint8_t Direction);
 LN_STATUS reportSwitch(LocoNetBus *ln, uint16_t Address);
@@ -290,8 +265,27 @@ const char* fmtOpcode(uint8_t opcode);
 // Other values greater than 0 will result in a LACK message being sent.
 // When no value result is appropriate, LNCV_LACK_OK will be sent as a LACK.
 
-/**
- * TODO: General LNCV documentation
- * Pick an ArtNr
- * Implement your code to the following behaviour...
- */
+
+#if defined (__cplusplus)
+extern "C" {
+#endif
+
+	// Notify *from the ISR context* that a byte was received.
+	// This is useful to, e.g., wake a task that will checks for new
+	// LocoNet messages.
+	extern void notifyLocoNetReceive(LnMsg *lnPacket) __attribute__((weak));
+
+
+	/**
+	 * TODO: General LNCV documentation
+	 * Pick an ArtNr
+	 * Implement your code to the following behaviour...
+	 */
+
+
+
+#if defined (__cplusplus)
+}
+#endif
+
+

@@ -1,11 +1,18 @@
-#ifdef ARDUINO_ARCH_ESP32
-
 #include "LocoNetESP32Hybrid.h"
 #include <esp_task_wdt.h>
-#include <esp_arduino_version.h>
+
 
 constexpr UBaseType_t LocoNetRXTXThreadPriority = 1;
 constexpr uint32_t LocoNetRXTXThreadStackSize = 2048;
+
+// number of microseconds for one bit
+constexpr uint8_t LocoNetTickTime = 60;
+
+// number of microseconds to remain in a collision state
+constexpr uint32_t CollisionTimeoutIncrement = 15 * LocoNetTickTime;
+
+// number of microseconds to remain in a CD BACKOFF state
+constexpr uint32_t CDBackoffTimeoutIncrement = LocoNetTickTime * LN_CARRIER_TICKS;
 
 #define LOCONET_TX_LOCK()    do {} while (xSemaphoreTake(_txQueuelock, portMAX_DELAY) != pdPASS)
 #define LOCONET_TX_UNLOCK()  xSemaphoreGive(_txQueuelock)
@@ -41,14 +48,8 @@ LocoNetESP32Hybrid::LocoNetESP32Hybrid(LocoNetBus *bus, uint8_t rxPin, uint8_t t
 {
 	_inst = this;
 
-	DEBUG("Initializing UART%d with RX:%d(%c), TX:%d(%c), timer %d", uartNum, _rxPin, _invertedRx?'I':'n', _txPin, _invertedTx?'I':'n', _timerId);
-
-#if ( defined(ESP_ARDUINO_VERSION_MAJOR) && (ESP_ARDUINO_VERSION_MAJOR >= 2) )
-	_uart = uartBegin(uartNum, 16667, SERIAL_8N1, _rxPin, -1, 256, 0, _invertedRx, 0);
-#else
+	DEBUG_LN2("Initializing UART%d with RX:%d(%c), TX:%d(%c), timer %d", uartNum, _rxPin, _invertedRx?'I':'n', _txPin, _invertedTx?'I':'n', _timerId);
 	_uart = uartBegin(uartNum, 16667, SERIAL_8N1, _rxPin, -1, 256, _invertedRx);
-#endif	
-
 	/*if(_invertedRx) {		
 		uartDetachRx(_uart);
 		uartAttachRx(_uart, _rxPin, true);
@@ -73,19 +74,19 @@ LocoNetESP32Hybrid::LocoNetESP32Hybrid(LocoNetBus *bus, uint8_t rxPin, uint8_t t
 }
 
 bool LocoNetESP32Hybrid::begin() {
-	DEBUG("Creating LocoNet TX Queue");
+	DEBUG_LN2("Creating LocoNet TX Queue");
 	_txQueue = xQueueCreate(256, sizeof(uint8_t));
 	if(_txQueue == NULL) {
 		printf("LocoNet ERROR: Failed to create TX queue!\n");
 		return false;
 	}
-	DEBUG("Creating LocoNet TX Lock");
+	DEBUG_LN2("Creating LocoNet TX Lock");
 	_txQueuelock = xSemaphoreCreateMutex();
 	if(_txQueuelock == NULL) {
 		printf("LocoNet ERROR: Failed to create TX Lock!\n");
 		return false;
 	}
-	DEBUG("Starting LocoNet RX/TX Task");
+	DEBUG_LN2("Starting LocoNet RX/TX Task");
 	if(xTaskCreatePinnedToCore(taskEntryPoint, "LocoNet RX/TX", LocoNetRXTXThreadStackSize,
 		(void *)this, LocoNetRXTXThreadPriority, &_rxtxTask, _preferedCore) != pdPASS) {
 		printf("LocoNet ERROR: Failed to start LocoNet RX/TX task!\n");
@@ -109,19 +110,19 @@ bool LocoNetESP32Hybrid::begin() {
 
 void LocoNetESP32Hybrid::end() {
 	if(_rxtxTask) {
-		DEBUG("Suspending LocoNet RX/TX Task");
+		DEBUG_LN2("Suspending LocoNet RX/TX Task");
 		vTaskSuspend(_rxtxTask);
-		DEBUG("Deleting LocoNet RX/TX Task");
+		DEBUG_LN2("Deleting LocoNet RX/TX Task");
 		vTaskDelete(_rxtxTask);
 	}
 	_rxtxTask = nullptr;
 	if(_txQueue) {
-		DEBUG("Deleting LocoNet TX Queue");
+		DEBUG_LN2("Deleting LocoNet TX Queue");
 		vQueueDelete(_txQueue);
 	}
 	_txQueue = nullptr;
 	if(_txQueuelock) {
-		DEBUG("Deleting LocoNet TX Queue Lock");
+		DEBUG_LN2("Deleting LocoNet TX Queue Lock");
 		vSemaphoreDelete(_txQueuelock);
 	}
 	_txQueuelock = nullptr;
@@ -130,7 +131,7 @@ void LocoNetESP32Hybrid::end() {
 }
 
 void LocoNetESP32Hybrid::startCollisionTimer() {
-	DEBUG("LocoNet Collision!!!");
+	DEBUG_LN2("LocoNet Collision!!!");
 	uartFlush(_uart);
 	_state = TX_COLLISION;
 	txStats.collisions++;
@@ -163,28 +164,28 @@ void LocoNetESP32Hybrid::rxtxTask() {
 		// process incoming first
 		
 		if(uartAvailable(_uart)) {
-			DEBUG("RX Begin");
+			DEBUG_LN2("RX Begin");
 			// start RX to consume available data
 			_state = RX;
 			while(uartAvailable(_uart)) {
 				//esp_task_wdt_reset();
 				consume(uartRead(_uart));
 			}
-			DEBUG("RX End");
+			DEBUG_LN2("RX End");
 			// successful RX, switch to CD_BACKOFF
 			startCDBackoffTimer();
 		} else if(_state == CD_BACKOFF && cdBackoffTimerElapsed()) {
-			DEBUG("Switching to IDLE after backoff");
+			DEBUG_LN2("Switching to IDLE after backoff");
 			_state = IDLE;
 		} else if(_state == IDLE) {
 			LOCONET_TX_LOCK();
 			if(_txQueue && uxQueueMessagesWaiting(_txQueue) > 0) {
-				DEBUG("TX Begin");
+				DEBUG_LN2("TX Begin");
 				// last chance check for TX_COLLISION before starting TX
 				// st_urx_out contains the status of the UART RX state machine,
 				// any value other than zero indicates it is active.
-				if(digitalRead(_rxPin) == RX_LOW_VAL) {
-					DEBUG("digitalRead: %d", digitalRead(_rxPin) == RX_LOW_VAL?1:0);
+				if(uartRxActive(_uart) || digitalRead(_rxPin) == RX_LOW_VAL) {
+					DEBUG_LN2("uartActive: %d / digitalRead: %d",uartRxActive(_uart)?1:0,  digitalRead(_rxPin) == RX_LOW_VAL?1:0);
 					startCollisionTimer();
 				} else  {
 					// no collision, start TX
@@ -193,7 +194,7 @@ void LocoNetESP32Hybrid::rxtxTask() {
 						uint8_t out;
 						uint32_t t0=0;
 						if(xQueueReceive(_txQueue, &out, (portTickType)1)) {
-							DEBUG("sending %02x -> %04x", out, txByte);
+							DEBUG_LN2("sending %02x -> %04x", out, txByte);
 							txByte = 1<<9 | out<<1 | 0; 
 							txBit = 0;
 							//timerAlarmEnable(_lnTimer);
@@ -207,11 +208,11 @@ void LocoNetESP32Hybrid::rxtxTask() {
 								//delay(1);
 							}
 							t0 += (micros()-t1);
-							DEBUG("Took %d uS", t0);
+							DEBUG_LN2("Took %d uS", t0);
 							// check echoed byte for collision
 							uint8_t tt = uartRead(_uart);
 							if(tt != out) {
-								DEBUG("Got %02x, expected %02x", tt, out);
+								DEBUG_LN2("Got %02x, expected %02x", tt, out);
 								startCollisionTimer();
 								digitalWrite(_txPin, TX_LOW_VAL);
 							}
@@ -221,20 +222,20 @@ void LocoNetESP32Hybrid::rxtxTask() {
 					if(_state == TX) {
 						// TX done, switch to CD_BACKOFF
 						startCDBackoffTimer();
-						DEBUG("TX complete");
+						DEBUG_LN2("TX complete");
 					} else {
 						// discard TX queue as we had collision
 						xQueueReset(_txQueue);
-						DEBUG("TX queue reset");
+						DEBUG_LN2("TX queue reset");
 					}
 				}
-				DEBUG("TX End");
+				DEBUG_LN2("TX End");
 			}
 			LOCONET_TX_UNLOCK();
 		} else if(_state == TX_COLLISION && collisionTimerElapsed()) {
 			digitalWrite(_txPin, TX_IDLE_VAL);
 			startCDBackoffTimer();
-			DEBUG("TX COLLISION TIMER elapsed");
+			DEBUG_LN2("TX COLLISION TIMER elapsed");
 		} else {
 			digitalWrite(_txPin, TX_IDLE_VAL);
 		}
@@ -248,11 +249,11 @@ void LocoNetESP32Hybrid::txBitTimerFunc() {
 	//timerAlarmWrite(_lnTimer, 10, true);
 	bool bit = txByte & (1<<txBit);
 	//if (txBit>9) return;
-	//DEBUG_ISR("%d=%d", txBit, bit);
+	//DEBUG_LN2_ISR("%d=%d", txBit, bit);
 	digitalWrite( _txPin, bit ? TX_HIGH_VAL : TX_LOW_VAL );
 	if(txBit==9) {
 		timerStop(_lnTimer);
-		//DEBUG_ISR("disabling %d", 1);
+		//DEBUG_LN2_ISR("disabling %d", 1);
 		//timerAlarmDisable(_lnTimer);
 	}
 	txBit++;
@@ -270,7 +271,7 @@ LN_STATUS LocoNetESP32Hybrid::sendLocoNetPacketTry(uint8_t *packetData, uint8_t 
 				return LN_PRIO_BACKOFF;
 			}
 		} else if(_state != IDLE) {
-			DEBUG("sendLocoNetPacketTry, state=%d", _state);
+			DEBUG_LN2("sendLocoNetPacketTry, state=%d", _state);
 			return LN_NETWORK_BUSY;
 		}
 		LOCONET_TX_LOCK();
@@ -287,11 +288,10 @@ LN_STATUS LocoNetESP32Hybrid::sendLocoNetPacketTry(uint8_t *packetData, uint8_t 
 			delay(1);
 		}
 		if(_state == IDLE || _state == CD_BACKOFF) {
-			return LN_IDLE;
+			return LN_DONE;
 		} else if(_state == TX_COLLISION) {
 			return LN_COLLISION;
 		}
 	}
 	return LN_UNKNOWN_ERROR;
 }
-#endif

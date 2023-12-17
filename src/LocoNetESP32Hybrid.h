@@ -34,8 +34,6 @@
  *
  *****************************************************************************/
 
-#ifdef ARDUINO_ARCH_ESP32
-
 #pragma once
 
 #include "LocoNet2.h"
@@ -96,4 +94,3 @@ class LocoNetESP32Hybrid: public LocoNetPhy {
 		friend void txTimerCb();
 		friend void taskEntryPoint(void *param);
 };
-#endif

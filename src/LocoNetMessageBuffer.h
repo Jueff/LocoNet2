@@ -58,7 +58,7 @@
 
 #pragma once
 
-#include "ln_opc.h"
+#include "ln2_opc.h"
 
 #ifndef LN_BUF_SIZE
 #define LN_BUF_SIZE (sizeof(lnMsg))
@@ -78,4 +78,3 @@ class LocoNetMessageBuffer {
 
   	LnRxStats  		stats ;
 };
-

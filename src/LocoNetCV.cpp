@@ -94,7 +94,7 @@ LocoNetCV::LocoNetCV(LocoNet &locoNet) : _locoNet(locoNet) {
 }
 
 void LocoNetCV::processLNCVMessage(const lnMsg * rxPacket) {
-    DEBUG("Possibly a LNCV message.");
+    DEBUG_LN2("Possibly a LNCV message.");
     // Either of these message types may be a LNCV message
     // Sanity check: Message length, Verify addresses
     lnMsg rxCopy = *rxPacket;
@@ -102,7 +102,7 @@ void LocoNetCV::processLNCVMessage(const lnMsg * rxPacket) {
     if (LnPacket->ub.mesg_size == 15 && LnPacket->ub.DSTL == LNCV_MODULE_DSTL && LnPacket->ub.DSTH == LNCV_MODULE_DSTH) {
         // It is a LNCV programming message
         computeBytesFromPXCT(LnPacket->ub);
-        DEBUG("Message bytes: %d %x %x %x\n",
+        DEBUG_LN2("Message bytes: %d %x %x %x\n",
             LnPacket->ub.ReqId,
             LnPacket->ub.payload.data.deviceClass,
             LnPacket->ub.payload.data.lncvNumber,
@@ -113,21 +113,21 @@ void LocoNetCV::processLNCVMessage(const lnMsg * rxPacket) {
         case LNCV_REQID_CFGREQUEST:
             if (LnPacket->ub.payload.data.deviceClass == 0xFFFF && LnPacket->ub.payload.data.lncvNumber == 0x0000 && LnPacket->ub.payload.data.lncvValue == 0xFFFF) {
                 // This is a discover message
-                DEBUG("LNCV discover: ");
+                DEBUG_LN2("LNCV discover: ");
                 if (discoveryCallback) {
-                    DEBUG(" executing...");
+                    DEBUG_LN2(" executing...");
                     if (discoveryCallback(LnPacket->ub.payload.data.deviceClass, LnPacket->ub.payload.data.lncvValue) == LNCV_LACK_OK) {
                         makeLNCVresponse(response.ub, LnPacket->ub.SRC, LnPacket->ub.payload.data.deviceClass, 0x00, LnPacket->ub.payload.data.lncvValue, 0x00);
                         _locoNet.send(&response);
                     }
                 } else {
-                    DEBUG(" NOT EXECUTING!");
+                    DEBUG_LN2(" NOT EXECUTING!");
                 }
             } else if (LnPacket->ub.payload.data.flags == 0x00) {
                 // This can only be a read message
-                DEBUG("LNCV read: ");
+                DEBUG_LN2("LNCV read: ");
                 if (cvReadCallback) {
-                    DEBUG(" executing...");
+                    DEBUG_LN2(" executing...");
                     int8_t returnCode = cvReadCallback(LnPacket->ub.payload.data.deviceClass, LnPacket->ub.payload.data.lncvNumber, LnPacket->ub.payload.data.lncvValue);
                     if (returnCode == LNCV_LACK_OK) {
                         // return the read value
@@ -139,25 +139,25 @@ void LocoNetCV::processLNCVMessage(const lnMsg * rxPacket) {
                         // return a nack
                     }
                 } else {
-                    DEBUG(" NOT EXECUTING!");
+                    DEBUG_LN2(" NOT EXECUTING!");
                 }
             } else {
                 // Its a "control" message
-                DEBUG("LNCV control: ");
+                DEBUG_LN2("LNCV control: ");
                 if ((LnPacket->ub.payload.data.flags & LNCV_FLAG_PRON) != 0x00 && ((LnPacket->ub.payload.data.flags & LNCV_FLAG_PROFF) != 0x00)) {
-                    DEBUG("Illegal, ignoring.");
+                    DEBUG_LN2("Illegal, ignoring.");
                     // Illegal message, no action.
                 } else if ((LnPacket->ub.payload.data.flags & LNCV_FLAG_PRON) != 0x00) {
-                    DEBUG("Programming Start, ");
+                    DEBUG_LN2("Programming Start, ");
                     // LNCV PROGAMMING START
                     // We'll skip the check whether D[2]/D[3] are 0x0000.
                     if (progStartCallback) {
-                        DEBUG(" executing...");
+                        DEBUG_LN2(" executing...");
                         if (progStartCallback(LnPacket->ub.payload.data.deviceClass, LnPacket->ub.payload.data.lncvValue) == LNCV_LACK_OK) {
-                            DEBUG("LNCV_LACK_OK %x %x\n", LnPacket->ub.payload.data.deviceClass, LnPacket->ub.payload.data.lncvValue);
+                            DEBUG_LN2("LNCV_LACK_OK %x %x\n", LnPacket->ub.payload.data.deviceClass, LnPacket->ub.payload.data.lncvValue);
                             makeLNCVresponse(response.ub, LnPacket->ub.SRC, LnPacket->ub.payload.data.deviceClass, 0x00, LnPacket->ub.payload.data.lncvValue, 0x80);
                             delay(10); // for whatever reason, we need to delay, otherwise the message will not be sent.
-                            DEBUG("LoconetPacket: %x %x %x %x %x %x %x %x %x %x %x %x %x %x\n",
+                            DEBUG_LN2("LoconetPacket: %x %x %x %x %x %x %x %x %x %x %x %x %x %x\n",
                                 response.ub.command,
                                 response.ub.mesg_size,
                                 response.ub.SRC,
@@ -172,12 +172,12 @@ void LocoNetCV::processLNCVMessage(const lnMsg * rxPacket) {
                                 response.ub.payload.D[4],
                                 response.ub.payload.D[5],
                                 response.ub.payload.D[6]);
-                            DEBUG("Return Code from Send: %x\n", _locoNet.send(&response));
+                            DEBUG_LN2("Return Code from Send: %x\n", _locoNet.send(&response));
                         } else { // not for us? then no reaction!
-                            DEBUG("Ignoring.\n");
+                            DEBUG_LN2("Ignoring.\n");
                         }
                     } else {
-                        DEBUG(" NOT EXECUTING!");
+                        DEBUG_LN2(" NOT EXECUTING!");
                     }
                 }
                 if ((LnPacket->ub.payload.data.flags & LNCV_FLAG_PROFF) != 0x00 && progStopCallback) {

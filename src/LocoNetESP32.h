@@ -34,8 +34,6 @@
  *
  *****************************************************************************/
 
-#ifdef ARDUINO_ARCH_ESP32
-
 #pragma once
 
 #include "LocoNet2.h"
@@ -63,6 +61,7 @@ class LocoNetESP32: public LocoNetPhy
         QueueHandle_t _rxQueue;
         QueueHandle_t _txQueue;
         LN_TX_RX_STATUS _state;
+		bool checkStartBit;
         portMUX_TYPE _timerMux = portMUX_INITIALIZER_UNLOCKED;
         uint8_t _lnCurrentTxByte;
         uint8_t _lnCurrentRxByte;
@@ -82,7 +81,7 @@ class LocoNetESP32: public LocoNetPhy
             VAL_RX_HIGH=HIGH
         };
 
-        bool _isrAttached;
+        bool _isrAttached = false;
         void IRAM_ATTR enableStartBitISR(bool en=true) ;
         void IRAM_ATTR loconetStartBit();
         void IRAM_ATTR loconetBitTimer();
@@ -101,4 +100,3 @@ class LocoNetESP32: public LocoNetPhy
         friend void locoNetStartBitCallback();
 
 };
-#endif

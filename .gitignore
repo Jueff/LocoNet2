@@ -1,6 +1,3 @@
-# Ignore special file to allow editing of Arduino Library Examples
-.development
-
 # Compiled Object files
 *.slo
 *.lo

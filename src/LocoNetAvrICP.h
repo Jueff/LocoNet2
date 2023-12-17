@@ -34,11 +34,10 @@
  * 
  *****************************************************************************/
 
-#ifdef ARDUINO_ARCH_AVR
-
 #pragma once
 
 #include "LocoNet2.h"
+#ifndef ESP32
 
 class LocoNetAvrIcp: public LocoNet
 {

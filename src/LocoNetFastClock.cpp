@@ -125,7 +125,7 @@ void LocoNetFastClock::process66msActions() {
             _data.fc.days++;
           }
         }
-        DEBUG("FastClockUpdate rate: %d, days: %d, time: %d:%d", _data.fc.clk_rate, _data.fc.days,
+        DEBUG_LN2("FastClockUpdate rate: %d, days: %d, time: %d:%d", _data.fc.clk_rate, _data.fc.days,
             (_data.fc.hours_24 >= (128-24)) ? _data.fc.hours_24 - (128-24) : _data.fc.hours_24 % 24,
             _data.fc.mins_60 - (127-60));
         // We either send a message out onto the LocoNet to change the time,

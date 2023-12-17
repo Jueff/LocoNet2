@@ -173,11 +173,11 @@ SV_STATUS LocoNetSystemVariable::processMessage(const lnMsg *rxPacket) {
     return SV_NOT_CONSUMED;
   }
   decodePeerData(&LnPacket->px, unData.abPlain);
-  DEBUG("LNSV Src: %d  Dest: %d  CMD: %x", LnPacket->sv.src, unData.stDecoded.unDestinationId.w, LnPacket->sv.sv_cmd);
+  DEBUG_LN2("LNSV Src: %d  Dest: %d  CMD: %x", LnPacket->sv.src, unData.stDecoded.unDestinationId.w, LnPacket->sv.sv_cmd);
   if ((LnPacket->sv.sv_cmd != SV_DISCOVER) &&
       (LnPacket->sv.sv_cmd != SV_CHANGE_ADDRESS) &&
       (unData.stDecoded.unDestinationId.w != readSVNodeId())) {
-#ifdef DEBUG_SV
+#ifdef DEBUG_LN2_SV
     Serial.print("LNSV Dest Not Equal: ");
     Serial.println(readSVNodeId());
 #endif
@@ -256,9 +256,9 @@ SV_STATUS LocoNetSystemVariable::processMessage(const lnMsg *rxPacket) {
   encodePeerData(&LnPacket->px, unData.abPlain); // recycling the received packet
   LnPacket->sv.sv_cmd |= 0x40;    // flag the message as reply
   LN_STATUS lnStatus = _locoNet.send(LnPacket);
-  DEBUG("LNSV Send Response - Status: %d", lnStatus);
+  DEBUG_LN2("LNSV Send Response - Status: %d", lnStatus);
 
-  if (lnStatus != LN_IDLE) {
+  if (lnStatus != LN_DONE) {
     // failed to send the SV reply message.  Send will NOT be re-tried.
     _locoNet.send(OPC_LONG_ACK, (OPC_PEER_XFER & 0x7F), 44);  // indicate failure to send the reply
   }
@@ -292,7 +292,7 @@ SV_STATUS LocoNetSystemVariable::doDeferredProcessing() {
 
     encodePeerData(&msg.px, unData.abPlain);
 
-    if(_locoNet.send(&msg) != LN_IDLE) {
+    if(_locoNet.send(&msg) != LN_DONE) {
       return SV_DEFERRED_PROCESSING_NEEDED;
     }
     _deferredProcessingRequired = false;

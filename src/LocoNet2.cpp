@@ -69,10 +69,10 @@
 #include "LocoNet2.h"
 
 const char * LoconetStatusStrings[] = {
-	"Idle",
-	"Network Busy",
 	"CD Backoff",
 	"Prio Backoff",
+	"Network Busy",
+	"Done",
 	"Collision",
 	"Unknown Error",
 	"Retry Error"
@@ -95,7 +95,7 @@ LN_STATUS LocoNetPhy::onMessage(const LnMsg& msg) {
 }
 
 const char* LocoNetPhy::getStatusStr(LN_STATUS Status) {
-  if ((Status >= LN_IDLE) && (Status <= LN_RETRY_ERROR)) {
+  if ((Status >= LN_CD_BACKOFF) && (Status <= LN_RETRY_ERROR)) {
     return LoconetStatusStrings[Status];
   }
 
@@ -128,13 +128,13 @@ LN_STATUS LocoNetPhy::send(LnMsg *pPacket, uint8_t ucPrioDelay) {
   //writeChecksum(*pPacket);
  
 
-#ifdef DEBUG_OUTPUT
+#ifdef DEBUG_LN2_OUTPUT
   char _msg[100] = "LoconetPacket";
   int _l = strlen(_msg);
   for(uint8_t i=0; i<packetLen; i++)
     _l += sprintf(_msg+_l, " %02x", pPacket->data[i]);  
     // use formatMsg for that
-  DEBUG("%s", _msg);
+  DEBUG_LN2("%s", _msg);
 #endif
   
   for (uint8_t ucTry = 0; ucTry < LN_TX_RETRIES_MAX; ucTry++) {
@@ -142,13 +142,13 @@ LN_STATUS LocoNetPhy::send(LnMsg *pPacket, uint8_t ucPrioDelay) {
     // don't want to abort do/while loop before we did not see the backoff state once
     ucWaitForEnterBackoff = true;
     do {
-      //DEBUG("calling sendLocoNetPacketTry(%p, %d, %d) attempt %d", packet, packetLen, ucPrioDelay, ucTry);
+      //DEBUG_LN2("calling sendLocoNetPacketTry(%p, %d, %d) attempt %d", packet, packetLen, ucPrioDelay, ucTry);
       enReturn = sendLocoNetPacketTry(pPacket->data, packetLen, ucPrioDelay);
-      DEBUG("attempt %d, sendLocoNetPacketTry(%p, len=%d, priority=%d)=%s", 
-          ucTry, pPacket, packetLen, ucPrioDelay,
-          enReturn==LN_CD_BACKOFF?"LN_CD_BACKOFF" : enReturn==LN_PRIO_BACKOFF?"LN_PRIO_BACKOFF" : enReturn==LN_NETWORK_BUSY?"LN_NETWORK_BUSY": enReturn==LN_IDLE?"LN_IDLE": enReturn==LN_COLLISION?"LN_COLLISION": enReturn==LN_UNKNOWN_ERROR?"LN_UNKNOWN_ERROR":"LN_RETRY_ERROR"); 
-      if (enReturn == LN_IDLE) { // success?
-        return LN_IDLE;
+      DEBUG_LN2("attempt %d, sendLocoNetPacketTry(%p, len=%d, priority=%d)=%s", 
+          ucTry, packet, packetLen, ucPrioDelay,
+          enReturn==LN_CD_BACKOFF?"LN_CD_BACKOFF" : enReturn==LN_PRIO_BACKOFF?"LN_PRIO_BACKOFF" : enReturn==LN_NETWORK_BUSY?"LN_NETWORK_BUSY": enReturn==LN_DONE?"LN_DONE": enReturn==LN_COLLISION?"LN_COLLISION": enReturn==LN_UNKNOWN_ERROR?"LN_UNKNOWN_ERROR":"LN_RETRY_ERROR"); 
+      if (enReturn == LN_DONE) { // success?
+        return LN_DONE;
       }
 
       if (enReturn == LN_PRIO_BACKOFF) {
@@ -157,7 +157,6 @@ LN_STATUS LocoNetPhy::send(LnMsg *pPacket, uint8_t ucPrioDelay) {
       }
       //break;
     } while ((enReturn == LN_CD_BACKOFF) ||                             // waiting CD backoff
-             (enReturn == LN_COLLISION) ||                           	// waiting for the collision to expire
              (enReturn == LN_PRIO_BACKOFF) ||                           // waiting master+prio backoff
             ((enReturn == LN_NETWORK_BUSY) && ucWaitForEnterBackoff));  // or within any traffic unfinished
     // failed -> next try going to higher prio = smaller prio delay
@@ -193,8 +192,6 @@ void LocoNetPhy::consume(uint8_t newByte) {
 
 
 
-
-
 LnMsg makeMsg(uint8_t OpCode, uint8_t Data1, uint8_t Data2) {
   LnMsg SendPacket;
 
@@ -205,6 +202,11 @@ LnMsg makeMsg(uint8_t OpCode, uint8_t Data1, uint8_t Data2) {
   writeChecksum(SendPacket);
 
   return SendPacket;
+}
+
+LN_STATUS sendMsg(LocoNetBus *ln, LnMsg Msg) {
+	writeChecksum(Msg);
+    return ln->broadcast( Msg ) ;
 }
 
 
@@ -274,7 +276,7 @@ LocoNetDispatcher::LocoNetDispatcher(LocoNetBus *ln): ln(ln) {
 
 LN_STATUS LocoNetDispatcher::onMessage(const LnMsg& msg) {
   processPacket(&msg);
-  return LN_IDLE;
+  return LN_DONE;
 }
 
 LN_STATUS LocoNetDispatcher::send(LnMsg *txPacket) {
@@ -289,7 +291,11 @@ LN_STATUS LocoNetDispatcher::send(uint8_t opCode, uint8_t data1, uint8_t data2) 
 
 
 void LocoNetDispatcher::processPacket(const LnMsg *packet) {
-
+/*	
+	LnMsg copy = *packet;
+	if (notifyLocoNetReceive)
+		notifyLocoNetReceive(&copy); //, packet->sz.mesg_size);
+*/
     if(callbacks.find(CALLBACK_FOR_ALL_OPCODES) != callbacks.end()) {
       for(const auto &cb : callbacks[CALLBACK_FOR_ALL_OPCODES]) {
         cb(packet);
@@ -300,9 +306,9 @@ void LocoNetDispatcher::processPacket(const LnMsg *packet) {
       for(const auto &cb : callbacks[packet->sz.command]) {
         cb(packet);
       }
-#if defined(DEBUG_OUTPUT)
+#if defined(DEBUG_LN2_OUTPUT)
     } else {
-      DEBUG("No callbacks for OpCode %02x", packet->sz.command);
+      DEBUG_LN2("No callbacks for OpCode %02x", packet->sz.command);
 #endif
     }
     
@@ -312,7 +318,7 @@ void LocoNetDispatcher::processPacket(const LnMsg *packet) {
 void LocoNetDispatcher::onPacket(uint8_t opCode, std::function<void(const LnMsg *)> callback) {
 
   callbacks[opCode].push_back(callback);
-  DEBUG("registering callback function for OpCode: %02x, %d callbacks for this OpCode.", 
+  DEBUG_LN2("registering callback function for OpCode: %02x, %d callbacks for this OpCode.", 
     opCode, callbacks[opCode].size());
 }
 
@@ -321,7 +327,7 @@ void LocoNetDispatcher::onSensorChange(std::function<void(uint16_t, bool)> callb
     uint16_t address = (packet->srq.sw1 | ((packet->srq.sw2 & 0x0F ) << 7));
     address <<= 1;
     address += (packet->ir.in2 & OPC_INPUT_REP_SW) ? 2 : 1;
-    DEBUG("Sensor addr:%d, state:%d", address, packet->ir.in2 & OPC_INPUT_REP_HI);
+    DEBUG_LN2("Sensor addr:%d, state:%d", address, packet->ir.in2 & OPC_INPUT_REP_HI);
     callback(address, packet->ir.in2 & OPC_INPUT_REP_HI);
   });
 }
@@ -329,7 +335,7 @@ void LocoNetDispatcher::onSensorChange(std::function<void(uint16_t, bool)> callb
 void LocoNetDispatcher::onSwitchRequest(std::function<void(uint16_t, bool, bool)> callback) {
   onPacket(OPC_SW_REQ, [callback](const LnMsg *packet) {
     uint16_t address = (packet->srq.sw1 | ((packet->srq.sw2 & 0x0F ) << 7)) + 1;
-    DEBUG("Switch Request addr:%d, out:%d, dir:%d", address, packet->srq.sw2 & OPC_SW_REQ_OUT, packet->srq.sw2 & OPC_SW_REQ_DIR);
+    DEBUG_LN2("Switch Request addr:%d, out:%d, dir:%d", address, packet->srq.sw2 & OPC_SW_REQ_OUT, packet->srq.sw2 & OPC_SW_REQ_DIR);
     callback(address, packet->srq.sw2 & OPC_SW_REQ_OUT, packet->srq.sw2 & OPC_SW_REQ_DIR);
   });
 }
@@ -337,7 +343,7 @@ void LocoNetDispatcher::onSwitchRequest(std::function<void(uint16_t, bool, bool)
 void LocoNetDispatcher::onSwitchReport(std::function<void(uint16_t, bool, bool)> callback) {
   onPacket(OPC_SW_REP, [callback](const LnMsg *packet) {
     uint16_t address = (packet->srq.sw1 | ((packet->srq.sw2 & 0x0F ) << 7)) + 1;
-    DEBUG("Switch Report addr:%d, out:%d, dir:%d", address, packet->srq.sw2 & OPC_SW_REP_HI, packet->srq.sw2 & OPC_SW_REP_SW);
+    DEBUG_LN2("Switch Report addr:%d, out:%d, dir:%d", address, packet->srq.sw2 & OPC_SW_REP_HI, packet->srq.sw2 & OPC_SW_REP_SW);
     callback(address, packet->srq.sw2 & OPC_SW_REP_HI, packet->srq.sw2 & OPC_SW_REP_SW);
   });
 }
@@ -345,18 +351,18 @@ void LocoNetDispatcher::onSwitchReport(std::function<void(uint16_t, bool, bool)>
 void LocoNetDispatcher::onSwitchState(std::function<void(uint16_t, bool, bool)> callback) {
   onPacket(OPC_SW_STATE, [callback](const LnMsg *packet) {
     uint16_t address = (packet->srq.sw1 | ((packet->srq.sw2 & 0x0F ) << 7)) + 1;
-    DEBUG("Switch State addr:%d, out:%d, dir:%d", address, packet->srq.sw2 & OPC_SW_REQ_OUT, packet->srq.sw2 & OPC_SW_REQ_DIR);
+    DEBUG_LN2("Switch State addr:%d, out:%d, dir:%d", address, packet->srq.sw2 & OPC_SW_REQ_OUT, packet->srq.sw2 & OPC_SW_REQ_DIR);
     callback(address, packet->srq.sw2 & OPC_SW_REQ_OUT, packet->srq.sw2 & OPC_SW_REQ_DIR);
   });
 }
 
 void LocoNetDispatcher::onPowerChange(std::function<void(bool)> callback) {
   onPacket(OPC_GPON, [callback](const LnMsg *packet) {
-    DEBUG("Power ON");
+    DEBUG_LN2("Power ON");
     callback(true);
   });
   onPacket(OPC_GPON, [callback](const LnMsg *packet) {
-    DEBUG("Power OFF");
+    DEBUG_LN2("Power OFF");
     callback(false);
   });
 }

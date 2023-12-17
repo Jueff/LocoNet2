@@ -6,19 +6,17 @@
 
 #pragma once
 
-#define ETL_NO_STL
-#include <Embedded_Template_Library.h> // Mandatory for Arduino IDE only
 #include <etl/vector.h>
 
-#include "ln_opc.h"
+#include "ln2_opc.h"
 
-#define BUS_DEBUG_
+#define BUS_DEBUG_LN2_
 
-#ifdef BUS_DEBUG
+#ifdef BUS_DEBUG_LN2
 #include <Arduino.h>
-#define BUS_DEBUGF(format, ...)  do{ log_printf(ARDUHAL_LOG_FORMAT(I, format), ##__VA_ARGS__); }while(0)
+#define BUS_DEBUG_LN2F(format, ...)  do{ log_printf(ARDUHAL_LOG_FORMAT(I, format), ##__VA_ARGS__); }while(0)
 #else
-#define BUS_DEBUGF(...)
+#define BUS_DEBUG_LN2F(...)
 #endif
 
 template < class Msg, class Ret >
@@ -34,7 +32,7 @@ public:
 
     Ret broadcast(const Msg &msg, MsgConsumer* sender = nullptr) {
         
-        BUS_DEBUGF("message %02x %02x...", msg.data[0], msg.data[1]);
+        BUS_DEBUG_LN2F("message %02x %02x...", msg.data[0], msg.data[1]);
 
         Ret ret = okVal;
         for(const auto & c: consumers) {
@@ -51,7 +49,7 @@ public:
     }
 
     void removeConsumer(MsgConsumer * c) {
-        consumers.erase( etl::remove(consumers.begin(), consumers.end(), c), consumers.end() );
+        consumers.erase( std::remove(consumers.begin(), consumers.end(), c), consumers.end() );
     }
 
 private:

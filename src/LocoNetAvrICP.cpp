@@ -34,9 +34,8 @@
  *
  *****************************************************************************/
 
-#ifdef ARDUINO_ARCH_AVR
-
 #include "LocoNetAvrICP.h"
+#ifndef ESP32
 
 bool LocoNetAvrIcp::begin(uint8_t txPin)
 {
@@ -47,7 +46,7 @@ LN_STATUS LocoNetAvrIcp::sendLocoNetPacketTry(lnMsg *txData, unsigned char ucPri
 	txData = txData;						// Keep the Compilar happy
 	ucPrioDelay = ucPrioDelay;
 
-	return LN_IDLE;
+	return LN_DONE;
 }
 
 uint8_t LocoNetSystemVariable::readSVStorage(uint16_t Offset ) {
