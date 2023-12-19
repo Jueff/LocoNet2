@@ -44,7 +44,7 @@
 class LocoNetESP32: public LocoNetPhy
 {
     public:
-        LocoNetESP32(LocoNetBus *bus, uint8_t rxPin=16, uint8_t txPin=15, uint8_t timerId=0);
+        LocoNetESP32(LocoNetBus *bus, uint8_t rxPin=16, uint8_t txPin=15, uint8_t timerId=0, uint8_t xCoreID=1);  // default to timer id 0 and CPU core 1
         virtual bool begin();
         virtual void end();
 
@@ -72,6 +72,7 @@ class LocoNetESP32: public LocoNetPhy
         const uint8_t _rxPin;
         const uint8_t _txPin;
         const uint8_t _timerId;
+        const uint8_t _xCoreID;
         enum {
             VAL_TX_LOW=HIGH,
             VAL_TX_HIGH=LOW

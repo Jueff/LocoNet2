@@ -10,7 +10,7 @@
 
 #include <EEPROM.h>
 
-#define GPIO_DEBUG_LN2
+#define GPIO_DEBUG_LN2_
 
 #ifdef GPIO_DEBUG_LN2
 #define DEBUG_LN2_IOPIN 14
@@ -41,8 +41,8 @@ void IRAM_ATTR locoNetStartBitCallback() {
     locoNetInstance->loconetStartBit();
 }
 
-LocoNetESP32::LocoNetESP32(LocoNetBus *bus, uint8_t rxPin, uint8_t txPin, uint8_t timerId) 
-    : LocoNetPhy(bus), _rxPin(rxPin), _txPin(txPin), _timerId(timerId) 
+LocoNetESP32::LocoNetESP32(LocoNetBus *bus, uint8_t rxPin, uint8_t txPin, uint8_t timerId, uint8_t xCoreID) 
+    : LocoNetPhy(bus), _rxPin(rxPin), _txPin(txPin), _timerId(timerId), _xCoreID(xCoreID) 
 {
     // stash away a pointer to this instance for callback functions
     locoNetInstance = this;
@@ -56,7 +56,7 @@ bool LocoNetESP32::begin() {
     _txQueue = xQueueCreate(32, sizeof(uint8_t));
     
     xTaskCreatePinnedToCore(LocoNetESP32::rxByteProc, "LocoNetPhy", 
-        2048, (void* ) this, 2, &_rxByteTask, 1); // cpu1 
+        2048, (void* ) this, 2, &_rxByteTask, _xCoreID); // select the CPU core
 
     DEBUG_LN2("Configuring HW Timer %d as bit timer", _timerId);
     /* Use 1st timer of 4 (counted from zero).
@@ -220,7 +220,7 @@ void IRAM_ATTR LocoNetESP32::loconetBitTimer() {
 
     // Make sure the timer is set correctly for the next bit
     timerAlarmWrite(_lnTimer, 10, true);
-	
+
 	// Check if there is really a start bit or just a glitch
 	if (checkStartBit) {
 		checkStartBit = false;
@@ -353,7 +353,6 @@ void IRAM_ATTR LocoNetESP32::loconetBitTimer() {
     }
 
     }
-
     if(xHigherPriorityTaskWoken==pdTRUE) portYIELD_FROM_ISR();
 
 }
